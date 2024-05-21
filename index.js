@@ -2,8 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const AWS = require('aws-sdk');
 const path = require('path');
-
-require('dotenv').config();
+const fs = require('fs');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -12,33 +11,55 @@ const port = process.env.PORT || 3000;
 const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: process.env.AWS_REGION,
+  region: process.env.AWS_REGION
 });
 
-// Configure Multer to handle file uploads
+const bucketName = 'myscreambucket';
+
+// Set up multer for file handling
 const upload = multer({
-  storage: multer.memoryStorage(), // Use memory storage instead of disk storage
+  storage: multer.memoryStorage(),
 });
 
-// Endpoint to handle file uploads
-app.post('/upload', upload.single('file'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).send('No file uploaded.');
-  }
+// Serve static files from frontend directory
+app.use(express.static(path.join(__dirname, '../frontend')));
 
+// Endpoint to upload audio
+app.post('/upload', upload.single('audio'), (req, res) => {
   const params = {
-    Bucket: process.env.AWS_BUCKET_NAME,
-    Key: req.file.originalname, // File name you want to save as in S3
+    Bucket: bucketName,
+    Key: Date.now() + '-' + req.file.originalname,
     Body: req.file.buffer,
     ContentType: req.file.mimetype,
+    ACL: 'public-read'
   };
 
   s3.upload(params, (err, data) => {
     if (err) {
-      return res.status(500).send(err);
+      console.error(err);
+      res.status(500).send('Upload error');
+    } else {
+      res.status(200).send('Upload complete');
     }
+  });
+});
 
-    res.status(200).send(`File uploaded successfully. ${data.Location}`);
+// Endpoint to retrieve audio recordings
+app.get('/recordings', async (req, res) => {
+  const params = {
+    Bucket: bucketName,
+  };
+
+  s3.listObjectsV2(params, (err, data) => {
+    if (err) {
+      console.error(err);
+      res.status(500).send('Error fetching recordings');
+    } else {
+      const recordings = data.Contents.map(item => ({
+        url: `https://${bucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${item.Key}`
+      }));
+      res.json(recordings);
+    }
   });
 });
 
